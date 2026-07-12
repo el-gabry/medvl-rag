@@ -23,3 +23,6 @@ retrieval:
     - 1
     - 5
     - 10
+logging:
+  level: INFO
+  filename: run.log
