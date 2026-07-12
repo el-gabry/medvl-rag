@@ -1,0 +1,28 @@
+project:
+  name: medvl-rag
+  seed: 42
+
+runtime:
+  device: auto
+  deterministic: true
+
+paths:
+  data_dir: data
+  output_dir: outputs
+  checkpoint_dir: checkpoints
+
+training:
+  batch_size: 16
+  num_epochs: 10
+  learning_rate: 0.0001
+  num_workers: 4
+
+retrieval:
+  embedding_dim: 256
+  top_k:
+    - 1
+    - 5
+    - 10
+logging:
+  level: INFO
+  filename: run.log
