@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "medvl-rag"
+version = "0.1.0"
+description = "Medical vision-language retrieval and grounding research codebase"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "Pillow>=10.0",
+  "torch>=2.2",
+  "transformers>=4.46",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.7",
+  "mypy>=1.13",
+]
+
+[project.scripts]
+medvl-rag = "medvl_rag.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/medvl_rag"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
