@@ -43,8 +43,7 @@ def validate_patient_level_splits(frame: pd.DataFrame) -> None:
     if not leaking.empty:
         examples = ", ".join(map(str, leaking.index[:5]))
         raise ValueError(
-            "Patient leakage detected: a patient appears in multiple splits. "
-            f"Examples: {examples}"
+            f"Patient leakage detected: a patient appears in multiple splits. Examples: {examples}"
         )
 
 

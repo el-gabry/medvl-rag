@@ -13,9 +13,7 @@ def recall_at_k(retrieved_indices: np.ndarray, relevant_indices: np.ndarray, k: 
     return float(np.mean(hits)) if hits else 0.0
 
 
-def mean_reciprocal_rank(
-    retrieved_indices: np.ndarray, relevant_indices: np.ndarray
-) -> float:
+def mean_reciprocal_rank(retrieved_indices: np.ndarray, relevant_indices: np.ndarray) -> float:
     reciprocal_ranks: list[float] = []
     for row, target in zip(retrieved_indices, relevant_indices, strict=True):
         matches = np.flatnonzero(row == target)
@@ -28,9 +26,6 @@ def evaluate_retrieval(
     relevant_indices: np.ndarray,
     ks: tuple[int, ...] = (1, 5, 10),
 ) -> dict[str, float]:
-    metrics = {
-        f"recall@{k}": recall_at_k(retrieved_indices, relevant_indices, k)
-        for k in ks
-    }
+    metrics = {f"recall@{k}": recall_at_k(retrieved_indices, relevant_indices, k) for k in ks}
     metrics["mrr"] = mean_reciprocal_rank(retrieved_indices, relevant_indices)
     return metrics
