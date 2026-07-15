@@ -7,7 +7,7 @@ retrieval pipeline and unit tests to run without downloading model weights.
 import hashlib
 import re
 from abc import ABC, abstractmethod
-
+from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
@@ -17,23 +17,32 @@ FloatArray = NDArray[np.float32]
 
 def l2_normalize(array: FloatArray) -> FloatArray:
     """L2-normalize a NumPy array along its final dimension."""
-    values = np.asarray(array, dtype=np.float32)
-
-    denominator = np.linalg.norm(
-        values,
-        axis=-1,
-        keepdims=True,
-    )
-    denominator = np.clip(
-        denominator,
-        1e-12,
-        None,
+    values = cast(
+        FloatArray,
+        np.asarray(array, dtype=np.float32),
     )
 
-    return (values / denominator).astype(
-        np.float32,
-        copy=False,
+    denominator = cast(
+        FloatArray,
+        np.linalg.norm(
+            values,
+            axis=-1,
+            keepdims=True,
+        ).astype(np.float32, copy=False),
     )
+
+    denominator = cast(
+        FloatArray,
+        np.clip(
+            denominator,
+            1e-12,
+            None,
+        ).astype(np.float32, copy=False),
+    )
+
+    normalized = (values / denominator).astype(np.float32, copy=False)
+
+    return normalized
 
 
 class DualEncoder(ABC):
