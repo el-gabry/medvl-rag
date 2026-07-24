@@ -19,3 +19,8 @@ __all__ = [
     "normalize_embeddings",
     "validate_embedding_tensor",
 ]
+
+from medvl_rag.encoders.biomedclip import (
+    BIOMEDCLIP_MODEL_NAME,
+    BiomedCLIPEncoder,
+)
