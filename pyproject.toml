@@ -63,6 +63,11 @@ models = [
 ]
 
 
+
+biomedclip = [
+    "open_clip_torch",
+    "transformers",
+]
 [project.scripts]
 medvl-rag = "medvl_rag.cli:app"
 
