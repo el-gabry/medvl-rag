@@ -1,0 +1,4 @@
+encoder:
+  name: biomedclip
+  device: auto
+  batch_size: 8
