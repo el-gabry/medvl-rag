@@ -97,8 +97,7 @@ def test_cli_extracts_only_selected_split(
     cli = load_cli_module()
 
     monkeypatch.setattr(
-        cli,
-        "create_encoder",
+        "medvl_rag.embedding_cli.create_encoder",
         lambda config: FakeEncoder(),
     )
 
@@ -125,3 +124,12 @@ def test_cli_extracts_only_selected_split(
     assert result.study_ids == (expected_study,)
     assert result.image_embeddings.shape == (1, 2)
     assert result.text_embeddings.shape == (1, 2)
+
+
+def test_script_delegates_to_package_entry_point() -> None:
+    """Scripts must delegate application logic to the package."""
+    from medvl_rag.embedding_cli import main
+
+    script = load_cli_module()
+
+    assert script.main is main
