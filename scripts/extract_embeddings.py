@@ -5,23 +5,20 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from medvl_rag.config import (
-    load_config,
-    parse_encoder_config,
-)
-from medvl_rag.data import ImageReportDataset
+from medvl_rag.config import load_config, parse_encoder_config
+from medvl_rag.data import ImageReportDataset, load_manifest
 from medvl_rag.embedding_io import save_embedding_result
 from medvl_rag.embeddings import extract_embeddings
 from medvl_rag.encoders.factory import create_encoder
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
+    """Parse extraction arguments."""
 
     parser = argparse.ArgumentParser(
         description=(
-            "Extract image and report embeddings from a dataset "
-            "manifest using a configured vision-language encoder."
+            "Extract image and report embeddings from a "
+            "validated dataset manifest."
         )
     )
 
@@ -36,14 +33,24 @@ def parse_args() -> argparse.Namespace:
         "--manifest",
         type=Path,
         required=True,
-        help="Path to the dataset manifest.",
+        help="Path to the image-report CSV manifest.",
     )
 
     parser.add_argument(
         "--output-dir",
         type=Path,
         required=True,
-        help="Directory where extracted embeddings will be saved.",
+        help="Directory for extracted embeddings.",
+    )
+
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="train",
+        help=(
+            "Dataset split to extract. Defaults to train. "
+            "Use --split valid for CheXpert validation data."
+        ),
     )
 
     return parser.parse_args()
@@ -53,7 +60,7 @@ def validate_paths(
     config_path: Path,
     manifest_path: Path,
 ) -> None:
-    """Validate input paths before loading the pipeline."""
+    """Validate input files before loading."""
 
     if not config_path.is_file():
         raise FileNotFoundError(
@@ -67,7 +74,7 @@ def validate_paths(
 
 
 def main() -> None:
-    """Run end-to-end embedding extraction."""
+    """Extract and persist embeddings for one dataset split."""
 
     args = parse_args()
 
@@ -76,69 +83,55 @@ def main() -> None:
         args.manifest,
     )
 
+    selected_split = args.split.strip().lower()
+
+    if not selected_split:
+        raise ValueError("Dataset split cannot be empty.")
+
     print("=" * 64)
     print("MedVL-RAG embedding extraction")
     print("=" * 64)
 
-    print()
     print(f"Config:   {args.config}")
     print(f"Manifest: {args.manifest}")
+    print(f"Split:    {selected_split}")
     print(f"Output:   {args.output_dir}")
 
     print()
     print("Loading configuration...")
 
-    raw_config = load_config(
-        args.config
-    )
+    raw_config = load_config(args.config)
+    encoder_config = parse_encoder_config(raw_config)
 
-    encoder_config = parse_encoder_config(
-        raw_config
-    )
-
-    print(
-        f"Encoder:    {encoder_config.name}"
-    )
-    print(
-        f"Device:     {encoder_config.device}"
-    )
-    print(
-        f"Batch size: {encoder_config.batch_size}"
-    )
+    print(f"Encoder:    {encoder_config.name}")
+    print(f"Device:     {encoder_config.device}")
+    print(f"Batch size: {encoder_config.batch_size}")
 
     if encoder_config.model_name is not None:
-        print(
-            f"Model:      {encoder_config.model_name}"
-        )
+        print(f"Model:      {encoder_config.model_name}")
 
     print()
-    print("Loading dataset...")
+    print("Loading and validating manifest...")
+
+    frame = load_manifest(args.manifest)
 
     dataset = ImageReportDataset(
-        args.manifest
+        frame,
+        split=selected_split,
+        validate_image_paths=True,
     )
 
     dataset_size = len(dataset)
 
-    if dataset_size < 1:
-        raise ValueError(
-            "Dataset manifest contains no samples."
-        )
-
-    print(
-        f"Samples: {dataset_size}"
-    )
+    print(f"Selected split: {dataset.split}")
+    print(f"Samples:        {dataset_size}")
 
     print()
     print("Creating encoder...")
 
-    encoder = create_encoder(
-        encoder_config
-    )
+    encoder = create_encoder(encoder_config)
 
-    print(
-        f"Resolved device: {encoder.device}"
-    )
+    print(f"Resolved device: {encoder.device}")
 
     print()
     print("Extracting embeddings...")
@@ -162,23 +155,18 @@ def main() -> None:
     print("Embedding extraction completed successfully")
     print("=" * 64)
 
+    print(f"Split:               {selected_split}")
+    print(f"Samples:             {result.size}")
+    print(f"Embedding dimension: {result.embedding_dim}")
     print(
-        f"Samples:             {result.size}"
-    )
-    print(
-        f"Embedding dimension: {result.embedding_dim}"
-    )
-    print(
-        f"Image embeddings:    "
+        "Image embeddings:    "
         f"{tuple(result.image_embeddings.shape)}"
     )
     print(
-        f"Text embeddings:     "
+        "Text embeddings:     "
         f"{tuple(result.text_embeddings.shape)}"
     )
-    print(
-        f"Saved to:            {output_path}"
-    )
+    print(f"Saved to:            {output_path}")
 
 
 if __name__ == "__main__":
