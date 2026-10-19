@@ -26,3 +26,9 @@ retrieval:
 logging:
   level: INFO
   filename: run.log
+
+encoder:
+  name: biomedclip
+  device: auto
+  batch_size: 2
+  model_name: hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224

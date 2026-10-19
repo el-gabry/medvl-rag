@@ -31,3 +31,21 @@ def test_invalid_config_root_raises_error(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="root must be a mapping"):
         load_config(config_path)
+
+
+def test_default_config_declares_biomedclip_encoder() -> None:
+    """The shipped configuration must support real embedding extraction."""
+    from medvl_rag.config import parse_encoder_config
+    from medvl_rag.encoders.biomedclip import BIOMEDCLIP_MODEL_NAME
+
+    project_root = Path(__file__).resolve().parents[1]
+
+    config = load_config(
+        project_root / "configs" / "default.yaml"
+    )
+    encoder = parse_encoder_config(config)
+
+    assert encoder.name == "biomedclip"
+    assert encoder.device == "auto"
+    assert encoder.batch_size == 2
+    assert encoder.model_name == BIOMEDCLIP_MODEL_NAME
