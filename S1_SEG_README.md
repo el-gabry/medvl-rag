@@ -54,6 +54,21 @@ Review the dataset's exact research, redistribution and cloud-processing permiss
 - The original sandbox did not evaluate real Montgomery images or Kaggle GPU. Subsequently, the user WSL targeted S1 suite passed 6/6 tests. The older 159-test project regression is separate evidence and was not rerun for S1.
 - Synthetic mask Dice numbers **cannot** be reported as medical model performance.
 
+## S1-GIT-03 — Combined-mask support
+
+The adapter additionally supports `CXR_png/` with `masks/`
+containing combined binary lung masks. It selects only Montgomery
+(`MCUCXR_`) cases from mixed Montgomery/Shenzhen datasets.
+
+For combined masks, channels 0/1 mean image-left/image-right.
+These are NOT verified anatomical patient-left/patient-right labels.
+The experiment report records this distinction.
+
+Ambiguous connected regions fail closed. Combined-mask validation
+occurs after letterbox resizing, so real-data compatibility must
+still be checked before the held-out training experiment.
+Cloud-processing authorization remains a separate requirement.
+
 ## Milestone gate (not yet passed)
 
 S1-SEG can close only after: a legal, real paired Montgomery smoke; fixed split confirmation; legitimate held-out Dice/IoU; comparison to train-only prior; aggregate failure/latency metrics; provenance; one allowed overlay/failure example; and a decision `GO` / `CONDITIONAL` / `DROP`. A successful S1 milestone does not establish accuracy for Cardiomegaly or Pleural Effusion. Those belong to downstream finding/verification experiments, always including an unsegmented full-image baseline.

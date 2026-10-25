@@ -105,3 +105,39 @@ def test_synthetic_integration_smoke_is_not_clinical_validation(tmp_path: Path) 
     assert report["status"] == "pair_and_model_software_smoke_only"
     assert report["clinical_validation"] is False
     assert not (tmp_path / "outputs").exists()  # no private images or model outputs by default
+
+
+def test_combined_montgomery_mask_layout(tmp_path: Path) -> None:
+    """Combined masks need explicit image-coordinate separation."""
+    import numpy as np
+    from PIL import Image
+
+    from medvl_rag.datasets.montgomery import discover_cases, load_case
+
+    root = tmp_path / "MontgomerySet"
+    images = root / "CXR_png"
+    masks = root / "masks"
+    images.mkdir(parents=True)
+    masks.mkdir(parents=True)
+
+    filename = "MCUCXR_0001_0.png"
+    image = np.tile(np.arange(64, dtype=np.uint8), (64, 1))
+    mask = np.zeros((64, 64), dtype=np.uint8)
+    mask[10:55, 6:25] = 255
+    mask[10:55, 39:58] = 255
+
+    Image.fromarray(image).save(images / filename)
+    Image.fromarray(mask).save(masks / filename)
+
+    cases = discover_cases(root)
+    assert len(cases) == 1
+
+    _, channels, _ = load_case(cases[0], size=(64, 64))
+    assert tuple(channels.shape) == (2, 64, 64)
+
+    # Channel order in this layout is image-left, image-right.
+    # It does not certify anatomical patient laterality.
+    assert channels[0, :, :32].sum() > 0
+    assert channels[0, :, 32:].sum() == 0
+    assert channels[1, :, 32:].sum() > 0
+    assert channels[1, :, :32].sum() == 0

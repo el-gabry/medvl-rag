@@ -184,6 +184,17 @@ def run_experiment(
     report: dict[str, object] = {
         "experiment_id": "S1-SEG-v1", "task": "bilateral_anatomical_lung_segmentation",
         "source": "NLM Montgomery CXR", "cohort_total": len(cases),
+        "mask_layout": (
+            "combined_binary"
+            if cases[0].combined_mask_path is not None
+            else "separate_anatomical"
+        ),
+        "channel_semantics": (
+            "For combined masks: left/right metric keys mean "
+            "image-left/image-right, NOT verified patient laterality"
+            if cases[0].combined_mask_path is not None
+            else "Original source-labelled left/right masks"
+        ),
         "partition_counts": {key: len(value) for key, value in partitions.items()},
         "split_method": "sha256-case-key-70-15-15", "split_seed": "medvl-s1-seg-v1",
         "training_seed": seed, "best_epoch": best_epoch, "validation_loss": best_loss,

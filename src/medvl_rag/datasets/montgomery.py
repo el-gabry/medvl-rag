@@ -5,6 +5,7 @@ No data downloads, remote requests, metadata exports or clinical claims.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -24,32 +25,73 @@ _IMAGE_RE = re.compile(r"MCUCXR_[0-9]{4}_[01]\.png", re.IGNORECASE)
 class MontgomeryCase:
     case_key: str
     image_path: Path
-    left_mask_path: Path
-    right_mask_path: Path
+    left_mask_path: Path | None
+    right_mask_path: Path | None
+    combined_mask_path: Path | None = None
+
 
 
 def discover_cases(root: str | Path) -> tuple[MontgomeryCase, ...]:
-    """Require exactly paired left/right masks for each Montgomery CXR."""
+    """Find original paired masks OR one combined binary mask per image."""
     base = Path(root).resolve(strict=True)
     images = base / "CXR_png"
     left = base / "ManualMask" / "leftMask"
     right = base / "ManualMask" / "rightMask"
-    if not all(p.is_dir() for p in (images, left, right)):
-        raise FileNotFoundError("Expected CXR_png and ManualMask/{leftMask,rightMask}")
+    combined = base / "masks"
+
+    separate_ready = left.is_dir() and right.is_dir()
+    combined_ready = combined.is_dir()
+
+    if not images.is_dir():
+        raise FileNotFoundError("Missing CXR_png directory")
+    if left.is_dir() != right.is_dir():
+        raise FileNotFoundError("Incomplete separate-mask layout")
+    if separate_ready == combined_ready:
+        raise ValueError("Require exactly one supported mask layout")
+
     found: list[MontgomeryCase] = []
+
     for image in sorted(images.glob("*.png")):
         if not _IMAGE_RE.fullmatch(image.name):
-            raise ValueError(f"Unexpected Montgomery image filename: {image.name}")
-        l, r = left / image.name, right / image.name
-        if not l.is_file() or not r.is_file():
-            raise FileNotFoundError(f"Missing paired left/right mask: {image.name}")
-        found.append(MontgomeryCase(image.stem, image, l, r))
+            # The Kaggle combined-mask dataset also contains Shenzhen.
+            if combined_ready and image.name.upper().startswith("CHNCXR_"):
+                continue
+            raise ValueError(f"Unexpected image filename: {image.name}")
+
+        if separate_ready:
+            l, r = left / image.name, right / image.name
+            if not l.is_file() or not r.is_file():
+                raise FileNotFoundError(
+                    f"Missing paired left/right mask: {image.name}"
+                )
+            case = MontgomeryCase(image.stem, image, l, r)
+        else:
+            mask = combined / image.name
+            if not mask.is_file():
+                raise FileNotFoundError(
+                    f"Missing combined mask: {image.name}"
+                )
+            case = MontgomeryCase(
+                image.stem, image, None, None, mask
+            )
+        found.append(case)
+
     if not found:
         raise ValueError("No Montgomery images found")
-    for side_dir in (left, right):
-        extras = {p.name for p in side_dir.glob("*.png")} - {x.image_path.name for x in found}
+
+    names = {case.image_path.name for case in found}
+    mask_dirs = (left, right) if separate_ready else (combined,)
+
+    for directory in mask_dirs:
+        extras = {
+            path.name
+            for path in directory.glob("MCUCXR_*.png")
+        } - names
         if extras:
-            raise ValueError(f"Unmatched mask(s) in {side_dir.name}: {len(extras)}")
+            raise ValueError(
+                f"Unmatched Montgomery masks: {len(extras)}"
+            )
+
     return tuple(found)
 
 
@@ -98,24 +140,123 @@ def _array_mask(path: Path) -> np.ndarray:
     return binary.astype(np.uint8) * 255
 
 
+
+def _split_combined_mask(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Extract two image-side regions, not certified patient laterality."""
+    foreground = mask > 0
+    visited = np.zeros(foreground.shape, dtype=bool)
+    height, width = foreground.shape
+    components: list[list[tuple[int, int]]] = []
+
+    neighbors = [
+        (dy, dx)
+        for dy in (-1, 0, 1)
+        for dx in (-1, 0, 1)
+        if dy != 0 or dx != 0
+    ]
+
+    for sy, sx in np.argwhere(foreground):
+        y, x = int(sy), int(sx)
+        if visited[y, x]:
+            continue
+
+        pending = deque([(y, x)])
+        visited[y, x] = True
+        pixels: list[tuple[int, int]] = []
+
+        while pending:
+            cy, cx = pending.pop()
+            pixels.append((cy, cx))
+
+            for dy, dx in neighbors:
+                ny, nx = cy + dy, cx + dx
+                if (
+                    0 <= ny < height
+                    and 0 <= nx < width
+                    and foreground[ny, nx]
+                    and not visited[ny, nx]
+                ):
+                    visited[ny, nx] = True
+                    pending.append((ny, nx))
+
+        components.append(pixels)
+
+    total = int(foreground.sum())
+    minimum = max(8, int(0.01 * total))
+    major = [
+        pixels for pixels in components
+        if len(pixels) >= minimum
+    ]
+
+    if (
+        len(major) != 2
+        or min(len(pixels) for pixels in major) < 0.10 * total
+        or sum(len(pixels) for pixels in major) < 0.95 * total
+    ):
+        raise ValueError(
+            "Ambiguous combined mask: expected two major lung regions"
+        )
+
+    centers = [
+        sum(x for _, x in pixels) / len(pixels)
+        for pixels in major
+    ]
+
+    if abs(centers[0] - centers[1]) < 0.10 * width:
+        raise ValueError(
+            "Ambiguous image-left versus image-right assignment"
+        )
+
+    channels = [
+        np.zeros(foreground.shape, dtype=bool),
+        np.zeros(foreground.shape, dtype=bool),
+    ]
+
+    for index, pixels in enumerate(major):
+        channel = 0 if centers[index] < centers[1 - index] else 1
+        yy, xx = zip(*pixels)
+        channels[channel][yy, xx] = True
+
+    return channels[0], channels[1]
+
+
 def load_case(
     case: MontgomeryCase, *, size: tuple[int, int] = (256, 256)
 ) -> tuple[torch.Tensor, torch.Tensor, LetterboxGeometry]:
-    """Return image (1,H,W), left/right masks (2,H,W) in identical letterbox geometry."""
+    """Return image and two explicitly ordered segmentation channels."""
     original = _array_image(case.image_path)
-    left = _array_mask(case.left_mask_path)
-    right = _array_mask(case.right_mask_path)
-    if left.shape != original.shape or right.shape != original.shape:
-        raise ValueError("X-ray and lung masks have mismatched pixel geometry")
-    if np.logical_and(left > 0, right > 0).any():
-        raise ValueError("Left and right anatomical masks overlap")
     geom = LetterboxGeometry.create(original.shape, size)
-    image = geom.forward(original, is_mask=False).astype(np.float32) / 255.0
-    left_out = geom.forward(left, is_mask=True) > 0
-    right_out = geom.forward(right, is_mask=True) > 0
+
+    if case.combined_mask_path is not None:
+        mask = _array_mask(case.combined_mask_path)
+
+        if mask.shape != original.shape:
+            raise ValueError("Image and combined mask geometry differ")
+
+        transformed = geom.forward(mask, is_mask=True)
+        left_out, right_out = _split_combined_mask(transformed)
+
+    else:
+        if case.left_mask_path is None or case.right_mask_path is None:
+            raise ValueError("Incomplete separate-mask case")
+
+        left = _array_mask(case.left_mask_path)
+        right = _array_mask(case.right_mask_path)
+
+        if left.shape != original.shape or right.shape != original.shape:
+            raise ValueError("X-ray and lung masks have mismatched pixel geometry")
+        if np.logical_and(left > 0, right > 0).any():
+            raise ValueError("Left and right anatomical masks overlap")
+
+        left_out = geom.forward(left, is_mask=True) > 0
+        right_out = geom.forward(right, is_mask=True) > 0
+
     if not left_out.any() or not right_out.any():
         raise ValueError("Mask vanished after resizing")
+
+    image = geom.forward(original, is_mask=False).astype(np.float32) / 255.0
     mask = np.stack((left_out, right_out), axis=0).astype(np.float32)
+
     return torch.from_numpy(image[None, ...]), torch.from_numpy(mask), geom
 
 
