@@ -47,3 +47,82 @@ class SmallUNet(nn.Module):
         )
         d1 = self.dec1(torch.cat((up1, x1), dim=1))
         return self.head(d1)
+
+
+
+def normalize_pretrained_cxr(image: torch.Tensor) -> torch.Tensor:
+    """Match the frozen Kaggle S1-K04B grayscale normalization."""
+    if (
+        image.ndim != 4
+        or image.shape[1] != 1
+        or not image.is_floating_point()
+        or not torch.isfinite(image).all()
+    ):
+        raise ValueError("Expected finite float grayscale BCHW input")
+    if (image < 0).any() or (image > 1).any():
+        raise ValueError("Expected image intensities in [0, 1]")
+    return (image - 0.449) / 0.226
+
+
+def make_pretrained_lung_unet(
+    *, imagenet_init: bool = False
+) -> nn.Module:
+    """Build the validated architecture; avoid automatic downloads by default."""
+    try:
+        from segmentation_models_pytorch import Unet
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install the optional segmentation dependency"
+        ) from exc
+
+    return Unet(
+        encoder_name="resnet34",
+        encoder_weights="imagenet" if imagenet_init else None,
+        in_channels=1,
+        classes=2,
+        activation=None,
+    )
+
+
+def load_pretrained_lung_unet(
+    checkpoint_path: str,
+    *,
+    expected_sha256: str,
+    expected_source_sha: str,
+) -> nn.Module:
+    """Verify provenance and bytes before loading an authorized checkpoint."""
+    from hashlib import sha256
+    from pathlib import Path
+
+    path = Path(checkpoint_path)
+
+    if (
+        len(expected_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in expected_sha256)
+    ):
+        raise ValueError("Invalid expected SHA-256")
+
+    digest = sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+
+    if digest.hexdigest() != expected_sha256:
+        raise ValueError("Checkpoint SHA-256 mismatch")
+
+    payload = torch.load(
+        path, map_location="cpu", weights_only=True
+    )
+
+    if not isinstance(payload, dict) or (
+        payload.get("source_sha") != expected_source_sha
+        or payload.get("architecture") != "Unet-ResNet34-ImageNet"
+        or payload.get("selection_metric") != "validation_macro_dice"
+        or not isinstance(payload.get("state_dict"), dict)
+    ):
+        raise ValueError("Checkpoint provenance mismatch")
+
+    model = make_pretrained_lung_unet(imagenet_init=False)
+    model.load_state_dict(payload["state_dict"], strict=True)
+    model.eval()
+    return model

@@ -141,3 +141,129 @@ def test_combined_montgomery_mask_layout(tmp_path: Path) -> None:
     assert channels[0, :, 32:].sum() == 0
     assert channels[1, :, 32:].sum() > 0
     assert channels[1, :, :32].sum() == 0
+
+
+
+def test_pretrained_cxr_normalization() -> None:
+    from medvl_rag.segmentation.model import normalize_pretrained_cxr
+
+    image = torch.tensor([[[[0.0, 1.0]]]], dtype=torch.float32)
+    actual = normalize_pretrained_cxr(image)
+    expected = (image - 0.449) / 0.226
+    assert torch.allclose(actual, expected)
+
+    with pytest.raises(ValueError):
+        normalize_pretrained_cxr(torch.ones(1, 3, 8, 8))
+
+
+def test_pretrained_lung_unet_architecture_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    import types
+
+    from medvl_rag.segmentation.model import make_pretrained_lung_unet
+
+    fake = types.ModuleType("segmentation_models_pytorch")
+    fake.Unet = lambda **kwargs: kwargs
+    monkeypatch.setitem(sys.modules, "segmentation_models_pytorch", fake)
+
+    specification = make_pretrained_lung_unet()
+
+    assert specification == {
+        "encoder_name": "resnet34",
+        "encoder_weights": None,
+        "in_channels": 1,
+        "classes": 2,
+        "activation": None,
+    }
+
+    pretrained = make_pretrained_lung_unet(imagenet_init=True)
+    assert pretrained["encoder_weights"] == "imagenet"
+
+
+def test_pretrained_checkpoint_hash_rejection(tmp_path: Path) -> None:
+    from medvl_rag.segmentation.model import load_pretrained_lung_unet
+
+    checkpoint = tmp_path / "unverified.pt"
+    checkpoint.write_bytes(b"invalid checkpoint")
+
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        load_pretrained_lung_unet(
+            str(checkpoint),
+            expected_sha256="0" * 64,
+            expected_source_sha="26452ff154a938e0c66a9ff2cb1b2f09cd320c8e",
+        )
+
+
+
+def test_pretrained_validation_never_loads_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from medvl_rag.segmentation import experiment
+    import medvl_rag.segmentation.model as model_module
+
+    _fake_montgomery(tmp_path, n=12)
+    splits = fixed_split(discover_cases(tmp_path))
+
+    test_keys = {
+        case.case_key for case in splits["test"]
+    }
+    observed_keys = []
+
+    original_loader = experiment._loader
+
+    def guarded_loader(cases, batch_size, shuffle, seed):
+        keys = {case.case_key for case in cases}
+        assert keys.isdisjoint(test_keys)
+        observed_keys.append(keys)
+        return original_loader(
+            cases, batch_size, shuffle, seed
+        )
+
+    class SyntheticOnlyNetwork(torch.nn.Module):
+        def forward(self, image):
+            return torch.zeros(
+                image.shape[0], 2,
+                image.shape[2], image.shape[3],
+                device=image.device,
+            )
+
+    monkeypatch.setattr(
+        experiment, "_loader", guarded_loader
+    )
+    monkeypatch.setattr(
+        model_module,
+        "load_pretrained_lung_unet",
+        lambda *args, **kwargs: SyntheticOnlyNetwork(),
+    )
+
+    with pytest.raises(PermissionError):
+        experiment.validate_pretrained_lung_checkpoint(
+            tmp_path,
+            tmp_path / "unused.pt",
+            expected_sha256="0" * 64,
+            expected_source_sha="synthetic",
+        )
+
+    assert observed_keys == []
+
+    report = experiment.validate_pretrained_lung_checkpoint(
+        tmp_path,
+        tmp_path / "unused.pt",
+        expected_sha256="0" * 64,
+        expected_source_sha="synthetic",
+        authorized_data_access=True,
+    )
+
+    assert report["status"] == "validation_only"
+    assert report["n_train"] == len(splits["train"])
+    assert report["n_validation"] == len(splits["valid"])
+    assert report["n_test_reserved"] == len(splits["test"])
+    assert report["test_evaluated"] is False
+    assert report["training_performed"] is False
+    assert len(observed_keys) == 2
+    assert report["model_validation"]["n_cases"] == len(
+        splits["valid"]
+    )

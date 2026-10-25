@@ -47,6 +47,10 @@ dependencies = [
 
 
 [project.optional-dependencies]
+segmentation = [
+  "segmentation-models-pytorch==0.5.0",
+]
+
 dev = [
   "mypy>=1.13,<2",
   "pandas-stubs>=2.2,<3",

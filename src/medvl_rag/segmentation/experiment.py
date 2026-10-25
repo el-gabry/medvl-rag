@@ -113,6 +113,116 @@ def _loader(cases: tuple, batch_size: int, shuffle: bool, seed: int) -> DataLoad
     )
 
 
+
+def validate_pretrained_lung_checkpoint(
+    root: Path,
+    checkpoint_path: Path,
+    *,
+    expected_sha256: str,
+    expected_source_sha: str,
+    authorized_data_access: bool = False,
+    device_name: str = "cpu",
+    batch_size: int = 4,
+) -> dict[str, object]:
+    """Evaluate an existing checkpoint on validation only.
+
+    No training, held-out test loading, checkpoint writing,
+    hyperparameter selection or automatic data downloads.
+    """
+    if not authorized_data_access:
+        raise PermissionError("Dataset access authorization required")
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+
+    from medvl_rag.segmentation.model import (
+        load_pretrained_lung_unet,
+        normalize_pretrained_cxr,
+    )
+
+    device = torch.device(device_name)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA unavailable")
+
+    cases = discover_cases(root)
+    partitions = fixed_split(cases)
+
+    train_cases = partitions["train"]
+    valid_cases = partitions["valid"]
+
+    # Never construct a DataLoader for partitions["test"].
+    if not train_cases or not valid_cases:
+        raise ValueError("Empty development partition")
+
+    network = load_pretrained_lung_unet(
+        str(checkpoint_path),
+        expected_sha256=expected_sha256,
+        expected_source_sha=expected_source_sha,
+    )
+    network = network.to(device).eval()
+
+    class NormalizedInference(nn.Module):
+        def __init__(self, base: nn.Module) -> None:
+            super().__init__()
+            self.base = base
+
+        def forward(self, image: torch.Tensor) -> torch.Tensor:
+            return self.base(normalize_pretrained_cxr(image))
+
+    model = NormalizedInference(network).to(device).eval()
+
+    validation_loader = _loader(
+        valid_cases, batch_size, False, 410
+    )
+    training_loader = _loader(
+        train_cases, batch_size, False, 410
+    )
+
+    model_metrics = _eval(
+        model, validation_loader, device
+    )
+    prior_metrics = _mean_shape_prior(
+        training_loader, validation_loader
+    )
+
+    model_macro = (
+        model_metrics["left_dice"]
+        + model_metrics["right_dice"]
+    ) / 2
+    prior_macro = (
+        prior_metrics["left_dice"]
+        + prior_metrics["right_dice"]
+    ) / 2
+
+    return {
+        "status": "validation_only",
+        "model": "Unet-ResNet34-ImageNet",
+        "source_sha": expected_source_sha,
+        "checkpoint_sha256": expected_sha256,
+        "selection_metric": "validation_macro_dice",
+        "n_train": len(train_cases),
+        "n_validation": len(valid_cases),
+        "n_test_reserved": len(partitions["test"]),
+        "test_evaluated": False,
+        "training_performed": False,
+        "model_validation": {
+            **model_metrics,
+            "macro_dice": float(model_macro),
+        },
+        "shape_prior_validation": {
+            **prior_metrics,
+            "macro_dice": float(prior_macro),
+        },
+        "delta_macro_dice": float(
+            model_macro - prior_macro
+        ),
+        "channel_semantics": (
+            "image-left/image-right for combined masks; "
+            "patient laterality not certified"
+        ),
+        "clinical_validation": False,
+    }
+
+
 def run_experiment(
     root: Path, output_dir: Path, *, mode: str = "smoke", epochs: int = 15,
     seed: int = 410, batch_size: int = 4, device_name: str = "cpu",

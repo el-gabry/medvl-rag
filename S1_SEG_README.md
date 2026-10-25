@@ -72,3 +72,40 @@ Cloud-processing authorization remains a separate requirement.
 ## Milestone gate (not yet passed)
 
 S1-SEG can close only after: a legal, real paired Montgomery smoke; fixed split confirmation; legitimate held-out Dice/IoU; comparison to train-only prior; aggregate failure/latency metrics; provenance; one allowed overlay/failure example; and a decision `GO` / `CONDITIONAL` / `DROP`. A successful S1 milestone does not establish accuracy for Cardiomegaly or Pleural Effusion. Those belong to downstream finding/verification experiments, always including an unsegmented full-image baseline.
+
+
+## S1-P01 — Pretrained model promotion
+
+Source research evidence: S1-K04B / S1-K04C / S1-K04D.
+Frozen source commit: 26452ff154a938e0c66a9ff2cb1b2f09cd320c8e.
+
+Validation macro Dice: 0.9782 versus 0.8113 shape prior.
+Validation union Dice: 0.9785 versus 0.8121 shape prior.
+Held-out test: not evaluated.
+
+The optional SMP ResNet34 U-Net is constructed without downloading
+ImageNet weights by default. Checkpoint loading requires explicit
+SHA-256 and source provenance verification.
+
+Preprocessing matches Kaggle: (image - 0.449) / 0.226.
+
+Model weights and source medical images are not included.
+Cloud-processing and checkpoint-transfer permissions are unresolved.
+The existing SmallUNet baseline remains available.
+
+
+## S1-P02 — Validation-only entrypoint
+
+`validate_pretrained_lung_checkpoint()` uses the existing
+segmentation adapter, pinned checkpoint verification and
+train-only shape prior.
+
+It constructs loaders for train and validation only.
+It does not train or evaluate held-out test cases.
+
+This is an engineering reproduction interface, not a new
+research experiment. Medical-data access requires separate
+authorization. No real checkpoint is included in the repo.
+
+Do not use the historical `run_experiment(mode="train")`
+for development selection because that path evaluates test.
